@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>AI CAT CLAW - 完美街机版 (带暂停)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+    body { font-family: 'Press Start 2P', monospace; background: #111; color: #fff; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+    h1 { color: #ff00ff; text-shadow: 2px 2px #00ffff; font-size: 24px; margin-bottom: 5px; }
+    p.subtitle { font-size: 10px; color: #aaa; margin-bottom: 20px; }
+    
+    #game-container { position: relative; width: 640px; height: 600px; border: 4px solid #ff00ff; box-shadow: 0 0 20px rgba(255,0,255,0.4); background: #1e1e24; overflow: hidden; }
+    
+    canvas { display: block; }
+    video { display: none; }
+
+    #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .score-box { position: absolute; top: 20px; left: 20px; border: 2px solid #ff00ff; padding: 10px; color: #fff; font-size: 12px; background: rgba(0,0,0,0.8); z-index: 10; line-height: 1.8; }
+    .drop-zone-ui { position: absolute; bottom: 0; left: 0; width: 150px; height: 100px; border: 2px dashed #00ffff; display: flex; align-items: center; justify-content: center; color: #00ffff; font-size: 14px; background: rgba(0, 255, 255, 0.1); }
+    
+    #pip-monitor { position: absolute; bottom: 10px; right: 10px; width: 160px; height: 120px; border: 2px solid #00ff00; background: #000; z-index: 100; overflow: hidden; }
+    #pip-canvas { width: 100%; height: 100%; transform: scaleX(-1); }
+    .pip-label { position: absolute; top: 4px; left: 4px; font-size: 8px; color: #00ff00; background: rgba(0,0,0,0.7); padding: 2px; }
+
+    #dashboard { width: 640px; display: flex; justify-content: space-between; margin-top: 20px; }
+    .panel { border: 2px solid #444; background: #222; padding: 15px; font-size: 10px; width: 45%; position: relative; }
+    .status-active { color: #00ff00; }
+    .status-inactive { color: #ff0000; }
+    input[type=range] { width: 100%; margin-top: 10px; }
+    
+    #error-overlay { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,0,0,0.95); z-index: 999; color: white; padding: 40px; box-sizing: border-box; text-align: left; }
+    
+    .floating-text { position: absolute; width: 100%; text-align: center; top: 250px; font-size: 24px; font-weight: bold; text-shadow: 2px 2px #000; transition: opacity 0.5s; opacity: 0; z-index: 50; }
+    
+    /* 按钮组样式 */
+    .btn-group { display: flex; justify-content: space-between; margin-top: 15px; gap: 10px; }
+    .action-btn { flex: 1; padding: 10px; font-family: 'Press Start 2P', monospace; font-size: 9px; cursor: pointer; transition: 0.2s; pointer-events: auto; border: 2px solid #fff; }
+    
+    #reset-btn { background: #ff00ff; color: #fff; }
+    #reset-btn:hover { background: #fff; color: #ff00ff; }
+    
+    #pause-btn { background: #ffff00; color: #000; }
+    #pause-btn:hover { background: #fff; color: #000; }
+  </style>
+</head>
+<body>
+
+  <h1>AI CAT CLAW</h1>
+  <p class="subtitle">PERFECT HANDLING EDITION</p>
+
+  <div id="game-container">
+    <canvas id="physics-canvas" width="640" height="600"></canvas>
+    
+    <div id="ui-layer">
+      <div class="score-box">
+        <span style="color:#ff00ff;">HI-SCORE</span><br><span id="hi-score-display">000000</span><br>
+        SCORE<br><span id="score-display">000000</span><br>
+        TIME<br><span id="time-display" style="color:#00ffff;">00:00</span>
+      </div>
+      <div class="drop-zone-ui">DROP ZONE</div>
+      <div id="feedback-text" class="floating-text"></div>
+      
+      <div id="pip-monitor">
+        <canvas id="pip-canvas" width="160" height="120"></canvas>
+        <div class="pip-label">REC • SENSOR</div>
+      </div>
+    </div>
+    
+    <div id="error-overlay">
+      <h2>⚠️ 摄像头被拦截！</h2>
+      <p>Chrome 处于安全保护机制，禁用了非本地地址的摄像头访问。</p>
+      <p>请务必在上方地址栏精确输入：<br><br><strong style="background:#000; padding:10px; font-size: 14px;">http://localhost:8000</strong></p>
+    </div>
+  </div>
+
+  <div id="dashboard">
+    <div class="panel">
+      <div style="color: #00ffff; margin-bottom: 10px;">SENSOR STATUS</div>
+      <div id="sensor-status" class="status-inactive">● WAITING FOR CAMERA...</div>
+      <br><div>ACTION: <span id="action-display">MOVE LEFT/RIGHT</span></div>
+    </div>
+    <div class="panel">
+      <div style="color: #ff00ff; margin-bottom: 10px;">ADMIN CONTROLS</div>
+      <label>机器良心度: <span id="rate-display">15%</span></label>
+      <input type="range" id="win-rate" min="0" max="100" value="15">
+      
+      <div class="btn-group">
+        <button id="pause-btn" class="action-btn">⏸️ PAUSE</button>
+        <button id="reset-btn" class="action-btn">🔄 RESET</button>
+      </div>
+    </div>
+  </div>
+
+  <video id="webcam" autoplay playsinline></video>
+
+<script type="module">
+  import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+
+  // --- 1. 物理引擎与世界设置 ---
+  const Engine = Matter.Engine, Render = Matter.Render, Runner = Matter.Runner,
+        Bodies = Matter.Bodies, Body = Matter.Body, Composite = Matter.Composite, Constraint = Matter.Constraint, Events = Matter.Events;
+
+  const engine = Engine.create();
+  engine.positionIterations = 8; engine.velocityIterations = 8;
+  
+  const render = Render.create({
+    element: null, canvas: document.getElementById('physics-canvas'), engine: engine,
+    options: { width: 640, height: 600, wireframes: false, background: 'transparent' }
+  });
+
+  const floor = Bodies.rectangle(320, 610, 640, 20, { isStatic: true, render: { fillStyle: '#333' } });
+  const leftWall = Bodies.rectangle(-10, 300, 20, 600, { isStatic: true });
+  const rightWall = Bodies.rectangle(650, 300, 20, 600, { isStatic: true });
+  const dropZoneWall = Bodies.rectangle(150, 550, 10, 100, { isStatic: true, render: { fillStyle: '#00ffff' } });
+  const dropZoneSensor = Bodies.rectangle(75, 550, 140, 100, { isStatic: true, isSensor: true, render: { visible: false } });
+  Composite.add(engine.world, [floor, leftWall, rightWall, dropZoneWall, dropZoneSensor]);
+
+  const catColors = ['#ff9900', '#cccccc', '#ffffff', '#ff66b2'];
+  const cats = [];
+  function createNativeCat(x, y, color) {
+    const body = Bodies.rectangle(x, y, 40, 35, { render: { fillStyle: color } });
+    const earL = Bodies.polygon(x - 12, y - 22, 3, 10, { render: { fillStyle: color }, angle: -0.5 });
+    const earR = Bodies.polygon(x + 12, y - 22, 3, 10, { render: { fillStyle: color }, angle: 0.5 });
+    const eyeColor = (color === '#ffffff') ? '#000000' : '#ffffff';
+    const eyeL = Bodies.circle(x - 7, y - 5, 2, { render: { fillStyle: eyeColor } });
+    const eyeR = Bodies.circle(x + 7, y - 5, 2, { render: { fillStyle: eyeColor } });
+
+    const cat = Body.create({ parts: [body, earL, earR, eyeL, eyeR], friction: 0.8, restitution: 0.2, density: 0.05 });
+    cats.push(cat);
+    return cat;
+  }
+
+  function spawnCats() {
+    for (let i = 0; i < 25; i++) {
+      Composite.add(engine.world, createNativeCat(200 + Math.random() * 400, 50 + Math.random() * 200, catColors[i % 4]));
+    }
+  }
+  spawnCats();
+
+  const clawCarriage = Bodies.rectangle(320, 30, 60, 20, { isStatic: true, render: { fillStyle: '#00ffff' } });
+  const clawHitbox = Bodies.rectangle(320, 80, 20, 20, { isSensor: true, isStatic: true, render: { fillStyle: '#ff00ff' } });
+  const clawRod = Constraint.create({ bodyA: clawCarriage, bodyB: clawHitbox, length: 50, stiffness: 1, render: { strokeStyle: '#ff00ff', lineWidth: 4 } });
+  Composite.add(engine.world, [clawCarriage, clawHitbox, clawRod]);
+
+  // --- 2. 游戏核心状态与计分 ---
+  let score = 0, clawState = 'IDLE', currentGrabbedCat = null, grabConstraint = null, targetClawX = 320, hasRolledDice = false;
+  
+  // 🌟 再次降速：将速度调整为 1.8，增加下落的悬念和真实感
+  const CLAW_SPEED = 1.8; 
+  
+  let isPaused = false;
+  let totalSeconds = 0;
+  
+  let highScore = localStorage.getItem('ai_cat_claw_highscore') || 0;
+  const hiScoreDisplay = document.getElementById('hi-score-display');
+  hiScoreDisplay.innerText = String(highScore).padStart(6, '0');
+  
+  const scoreDisplay = document.getElementById('score-display');
+  const timeDisplay = document.getElementById('time-display');
+  const feedbackText = document.getElementById('feedback-text');
+  const winRateInput = document.getElementById('win-rate');
+  const resetBtn = document.getElementById('reset-btn');
+  const pauseBtn = document.getElementById('pause-btn');
+
+  document.getElementById('win-rate').addEventListener('input', (e) => document.getElementById('rate-display').innerText = e.target.value + '%');
+
+  function showFeedback(text, color) {
+    feedbackText.innerText = text; feedbackText.style.color = color; feedbackText.style.opacity = 1;
+    setTimeout(() => { feedbackText.style.opacity = 0; }, 1500);
+  }
+
+  setInterval(() => {
+    if (!isPaused) {
+      totalSeconds++;
+      const m = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+      const s = String(totalSeconds % 60).padStart(2, '0');
+      timeDisplay.innerText = `${m}:${s}`;
+    }
+  }, 1000);
+
+  const runner = Runner.create();
+  
+  pauseBtn.addEventListener('click', () => {
+    isPaused = !isPaused;
+    if (isPaused) {
+      pauseBtn.innerText = '▶️ RESUME';
+      pauseBtn.style.background = '#00ff00';
+      Runner.stop(runner); 
+      showFeedback("PAUSED", "#ffff00");
+    } else {
+      pauseBtn.innerText = '⏸️ PAUSE';
+      pauseBtn.style.background = '#ffff00';
+      Runner.run(runner, engine); 
+      showFeedback("RESUMED", "#00ff00");
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    isPaused = false;
+    pauseBtn.innerText = '⏸️ PAUSE';
+    pauseBtn.style.background = '#ffff00';
+    Runner.run(runner, engine); 
+
+    score = 0; scoreDisplay.innerText = '000000';
+    totalSeconds = 0; timeDisplay.innerText = '00:00';
+    clawState = 'IDLE'; targetClawX = 320;
+    
+    if (grabConstraint) { Composite.remove(engine.world, grabConstraint); grabConstraint = null; currentGrabbedCat = null; }
+    Matter.Body.setPosition(clawCarriage, { x: 320, y: 30 });
+    Matter.Body.setPosition(clawHitbox, { x: 320, y: 80 });
+    
+    cats.forEach(c => Composite.remove(engine.world, c));
+    cats.length = 0;
+    spawnCats();
+    showFeedback("GAME RESET!", "#ff00ff");
+  });
+
+  Events.on(engine, 'beforeUpdate', () => {
+    if (clawState === 'IDLE') {
+      const diffX = targetClawX - clawCarriage.position.x;
+      Matter.Body.setPosition(clawCarriage, { x: clawCarriage.position.x + diffX * 0.1, y: 30 });
+      Matter.Body.setPosition(clawHitbox, { x: clawCarriage.position.x, y: 80 });
+    }
+    else if (clawState === 'DROPPING') {
+      Matter.Body.setPosition(clawHitbox, { x: clawCarriage.position.x, y: clawHitbox.position.y + CLAW_SPEED });
+      if (clawHitbox.position.y > 550) { clawState = 'LIFTING'; hasRolledDice = false; }
+    }
+    else if (clawState === 'LIFTING') {
+      Matter.Body.setPosition(clawHitbox, { x: clawCarriage.position.x, y: clawHitbox.position.y - CLAW_SPEED });
+      if (currentGrabbedCat && clawHitbox.position.y < 350 && !hasRolledDice) {
+        hasRolledDice = true;
+        if (Math.random() > parseInt(winRateInput.value) / 100) {
+          Composite.remove(engine.world, grabConstraint); grabConstraint = null; currentGrabbedCat = null;
+          showFeedback("Slipped! 滑爪了", "#ff4444");
+        }
+      }
+      if (clawHitbox.position.y <= 80) { Matter.Body.setPosition(clawHitbox, { x: clawCarriage.position.x, y: 80 }); clawState = 'RETURNING'; }
+    }
+    else if (clawState === 'RETURNING') {
+      const dropTargetX = 75;
+      const distance = dropTargetX - clawCarriage.position.x;
+      if (Math.abs(distance) > 4) {
+        const moveStep = Math.sign(distance) * 4;
+        Matter.Body.setPosition(clawCarriage, { x: clawCarriage.position.x + moveStep, y: 30 });
+        Matter.Body.setPosition(clawHitbox, { x: clawCarriage.position.x, y: 80 });
+      } else {
+        Matter.Body.setPosition(clawCarriage, { x: dropTargetX, y: 30 });
+        Matter.Body.setPosition(clawHitbox, { x: dropTargetX, y: 80 });
+        if (grabConstraint) {
+          Composite.remove(engine.world, grabConstraint); grabConstraint = null; currentGrabbedCat = null;
+        }
+        clawState = 'IDLE'; 
+      }
+    }
+  });
+
+  Events.on(engine, 'collisionStart', (event) => {
+    event.pairs.forEach((pair) => {
+      const bodyA = pair.bodyA, bodyB = pair.bodyB;
+      const parentA = bodyA.parent, parentB = bodyB.parent;
+
+      if (clawState === 'DROPPING' && currentGrabbedCat === null) {
+        if (bodyA === clawHitbox && cats.includes(parentB)) grabCat(parentB);
+        else if (bodyB === clawHitbox && cats.includes(parentA)) grabCat(parentA);
+      }
+      if (bodyA === dropZoneSensor && cats.includes(parentB)) scoreCat(parentB);
+      else if (bodyB === dropZoneSensor && cats.includes(parentA)) scoreCat(parentA);
+    });
+  });
+
+  function grabCat(catBody) {
+    currentGrabbedCat = catBody;
+    grabConstraint = Constraint.create({ bodyA: clawHitbox, bodyB: currentGrabbedCat, length: 0, stiffness: 0.8, render: { visible: false } });
+    Composite.add(engine.world, grabConstraint);
+    clawState = 'LIFTING'; hasRolledDice = false;
+  }
+
+  function scoreCat(catBody) {
+    Composite.remove(engine.world, catBody);
+    const index = cats.indexOf(catBody);
+    if (index > -1) cats.splice(index, 1);
+    
+    score += 100;
+    scoreDisplay.innerText = String(score).padStart(6, '0');
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('ai_cat_claw_highscore', highScore);
+      hiScoreDisplay.innerText = String(highScore).padStart(6, '0');
+    }
+    showFeedback("+100 CAUGHT!", "#00ff00");
+  }
+
+  Render.run(render); Runner.run(runner, engine); 
+
+  // --- 3. 视觉中枢 ---
+  const video = document.getElementById("webcam"), sensorStatus = document.getElementById("sensor-status"), actionDisplay = document.getElementById("action-display"), pipCtx = document.getElementById("pip-canvas").getContext("2d");
+  let handLandmarker, lastVideoTime = -1, pinchFrames = 0;
+
+  async function initVision() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      document.getElementById('error-overlay').style.display = 'block'; return; 
+    }
+    try {
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`, delegate: "GPU" },
+        runningMode: "VIDEO", numHands: 1
+      });
+      navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then((stream) => {
+        video.srcObject = stream; video.addEventListener("loadeddata", predictWebcam);
+        sensorStatus.innerText = "● TRACKING ACTIVE"; sensorStatus.className = "status-active";
+      });
+    } catch (err) { console.error(err); }
+  }
+
+  async function predictWebcam() {
+    if (lastVideoTime !== video.currentTime) {
+      lastVideoTime = video.currentTime;
+      const results = handLandmarker.detectForVideo(video, performance.now());
+      pipCtx.clearRect(0, 0, 160, 120); pipCtx.drawImage(video, 0, 0, 160, 120);
+
+      if (results.landmarks && results.landmarks.length > 0) {
+        const lm = results.landmarks[0];
+        const isPinching = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) < 0.08;
+        
+        pipCtx.fillStyle = isPinching ? "#ff0000" : "#00ff00"; 
+        pipCtx.beginPath(); pipCtx.arc(lm[8].x * 160, lm[8].y * 120, 4, 0, 2*Math.PI); pipCtx.fill();
+        
+        if (!isPaused) {
+          targetClawX = (1 - lm[8].x) * 640; 
+          isPinching ? pinchFrames++ : pinchFrames = 0;
+          
+          if (pinchFrames > 3 && clawState === 'IDLE') clawState = 'DROPPING';
+          else {
+            actionDisplay.innerText = isPinching ? "PINCHING..." : "MOVE LEFT/RIGHT";
+            actionDisplay.style.color = isPinching ? "#ff0000" : "#fff";
+          }
+        } else {
+          actionDisplay.innerText = "PAUSED";
+          actionDisplay.style.color = "#ffff00";
+        }
+      }
+    }
+    window.requestAnimationFrame(predictWebcam);
+  }
+
+  initVision();
+</script>
+</body>
+</html>
